@@ -261,7 +261,7 @@ def register(mcp: FastMCP) -> None:
         def check_assignee(task: dict[str, Any]) -> bool:
             if not assignee_conditions:
                 return True
-            assignee = task.get("assigneeId")
+            assignee = task.get("assignee")
             for cond in assignee_conditions:
                 if cond == "noassignee" and not assignee:
                     return True
