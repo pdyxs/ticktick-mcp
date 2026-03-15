@@ -1,0 +1,292 @@
+from __future__ import annotations
+
+import json
+from datetime import datetime, timedelta, timezone
+from typing import Any
+
+from fastmcp import Context, FastMCP
+from fastmcp.exceptions import ToolError
+
+from ticktick_mcp.client import TickTickClient
+from ticktick_mcp.models import Filter
+from ticktick_mcp.resolve import resolve_name_with_etag
+
+
+def _get_client(ctx: Context) -> TickTickClient:
+    return ctx.request_context.lifespan_context["client"]  # type: ignore[union-attr]
+
+
+async def _resolve_filter(client: TickTickClient, name_or_id: str) -> tuple[str, str]:
+    """Resolve a filter name/ID to (id, etag)."""
+    data = await client.batch_check()
+    filters = [Filter(**f) for f in data.get("filters") or []]
+    return resolve_name_with_etag(
+        name_or_id,
+        filters,
+        lambda f: f.name,
+        lambda f: f.id,
+        lambda f: f.etag or "",
+        "filter",
+    )
+
+
+def register(mcp: FastMCP) -> None:
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        }
+    )
+    async def list_filters(ctx: Context) -> list[dict[str, Any]]:
+        """List all saved filters.
+
+        Returns all custom filters with their IDs, names, rules, and sort settings.
+        Requires v2 session token.
+        """
+        client = _get_client(ctx)
+        data = await client.batch_check()
+        return data.get("filters") or []
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": False,
+            "openWorldHint": True,
+        }
+    )
+    async def add_filter(
+        ctx: Context,
+        name: str,
+        rule: str | None = None,
+        sort_type: str | None = None,
+    ) -> Any:
+        """Create a new saved filter.
+
+        Args:
+            name: Filter name (required).
+            rule: JSON rule definition string (e.g. '{"and":[],"type":0}').
+            sort_type: Sort type for filter results (e.g. "dueDate", "priority").
+        """
+        client = _get_client(ctx)
+        f: dict[str, Any] = {"name": name}
+        if rule is not None:
+            f["rule"] = rule
+        if sort_type is not None:
+            f["sortType"] = sort_type
+        return await client.v2_post("/batch/filter", {"add": [f]})
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": False,
+            "openWorldHint": True,
+        }
+    )
+    async def edit_filter(
+        ctx: Context,
+        filter_name: str,
+        name: str | None = None,
+        rule: str | None = None,
+        sort_type: str | None = None,
+    ) -> Any:
+        """Update an existing filter.
+
+        Only provided fields are changed.
+
+        Args:
+            filter_name: Current filter name or ID. Supports fuzzy matching.
+            name: New filter name.
+            rule: New JSON rule definition string.
+            sort_type: New sort type.
+        """
+        client = _get_client(ctx)
+        fid, etag = await _resolve_filter(client, filter_name)
+        update: dict[str, Any] = {"id": fid, "etag": etag}
+        if name is not None:
+            update["name"] = name
+        if rule is not None:
+            update["rule"] = rule
+        if sort_type is not None:
+            update["sortType"] = sort_type
+        return await client.v2_post("/batch/filter", {"update": [update]})
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        }
+    )
+    async def delete_filters(
+        ctx: Context,
+        filters: list[str],
+    ) -> str:
+        """Delete one or more saved filters.
+
+        Args:
+            filters: List of filter names or IDs to delete. Supports fuzzy matching.
+        """
+        client = _get_client(ctx)
+        ids = []
+        for f in filters:
+            fid, _ = await _resolve_filter(client, f)
+            ids.append(fid)
+        await client.v2_post("/batch/filter", {"delete": ids})
+        return f"Deleted {len(ids)} filter(s)"
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        }
+    )
+    async def get_filter_tasks(
+        ctx: Context,
+        filter_name: str,
+    ) -> list[dict[str, Any]]:
+        """Get tasks matching a saved filter.
+
+        Reads the filter's current rule from TickTick and returns all active tasks
+        that match its conditions. Updating the filter in the app will automatically
+        be reflected in subsequent calls.
+
+        Handles the following condition types:
+        - listOrGroup / list: project membership
+        - dueDate: nodue, today, overdue, span(~N) (due within N days)
+        - assignee: noassignee, me
+        - taskType: task (excludes checklist items)
+
+        Args:
+            filter_name: Filter name or ID. Supports fuzzy matching.
+        """
+        client = _get_client(ctx)
+        data = await client.batch_check()
+
+        # Resolve filter
+        filters_data = data.get("filters") or []
+        filter_obj: dict[str, Any] | None = None
+        lower = filter_name.lower()
+        for f in filters_data:
+            if f.get("id") == filter_name or f.get("name", "").lower() == lower:
+                filter_obj = f
+                break
+        if filter_obj is None:
+            for f in filters_data:
+                if lower in f.get("name", "").lower():
+                    filter_obj = f
+                    break
+        if filter_obj is None:
+            raise ToolError(f"Filter '{filter_name}' not found")
+
+        rule_str = filter_obj.get("rule")
+        if not rule_str:
+            raise ToolError(f"Filter '{filter_name}' has no rule defined")
+
+        rule = json.loads(rule_str)
+
+        # Parse conditions
+        project_ids: list[str] | None = None
+        date_conditions: list[str] = []
+        assignee_conditions: list[str] = []
+        task_type_conditions: list[str] = []
+
+        for condition in rule.get("and", []):
+            cname = condition.get("conditionName")
+            if cname == "listOrGroup":
+                project_ids = []
+                for item in condition.get("or", []):
+                    if isinstance(item, dict) and item.get("conditionName") == "list":
+                        project_ids.extend(item.get("or", []))
+            elif cname == "dueDate":
+                date_conditions = condition.get("or", [])
+            elif cname == "assignee":
+                assignee_conditions = condition.get("or", [])
+            elif cname == "taskType":
+                task_type_conditions = condition.get("or", [])
+
+        # Fetch tasks from relevant projects
+        all_tasks: list[dict[str, Any]] = []
+        if project_ids:
+            for pid in project_ids:
+                try:
+                    pdata = await client.v1_get(f"/project/{pid}/data")
+                    all_tasks.extend(pdata.get("tasks") or [])
+                except Exception:
+                    continue
+        else:
+            projects = await client.v1_get("/project")
+            for p in projects:
+                try:
+                    pdata = await client.v1_get(f"/project/{p['id']}/data")
+                    all_tasks.extend(pdata.get("tasks") or [])
+                except Exception:
+                    continue
+
+        # Get current user ID for "me" assignee condition
+        user_id: str | None = None
+        if "me" in assignee_conditions:
+            profile = data.get("profile") or {}
+            user_id = profile.get("userId") or profile.get("id")
+
+        now = datetime.now(timezone.utc)
+
+        def _parse_due(due: str) -> datetime | None:
+            try:
+                return datetime.fromisoformat(due.replace("Z", "+00:00"))
+            except ValueError:
+                return None
+
+        def check_date(task: dict[str, Any]) -> bool:
+            if not date_conditions:
+                return True
+            due = task.get("dueDate")
+            for cond in date_conditions:
+                if cond == "nodue" and not due:
+                    return True
+                elif due:
+                    dt = _parse_due(due)
+                    if dt is None:
+                        continue
+                    if cond == "today" and dt.date() == now.date():
+                        return True
+                    elif cond == "overdue" and dt < now:
+                        return True
+                    elif cond.startswith("span(~"):
+                        try:
+                            days = int(cond[6:-1])
+                            if dt <= now + timedelta(days=days):
+                                return True
+                        except ValueError:
+                            pass
+            return False
+
+        def check_assignee(task: dict[str, Any]) -> bool:
+            if not assignee_conditions:
+                return True
+            assignee = task.get("assigneeId")
+            for cond in assignee_conditions:
+                if cond == "noassignee" and not assignee:
+                    return True
+                elif cond == "me" and assignee and assignee == user_id:
+                    return True
+            return False
+
+        def check_task_type(task: dict[str, Any]) -> bool:
+            if not task_type_conditions or "task" in task_type_conditions:
+                return True
+            return False
+
+        return [
+            t for t in all_tasks
+            if t.get("status") == 0
+            and check_date(t)
+            and check_assignee(t)
+            and check_task_type(t)
+        ]

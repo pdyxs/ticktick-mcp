@@ -1,1 +1,1 @@
-# This file makes src/ticktick_mcp a Python package 
+__version__ = "0.1.0"

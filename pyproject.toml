@@ -12,21 +12,15 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "anyio>=4.9.0",
-    "mcp>=1.6.0",
-    "python-dotenv>=1.1.0",
-    "ticktick-py",
-    "tzlocal>=5.3.1",
+    "fastmcp>=3.1.0",
+    "httpx>=0.28.0",
 ]
 
 [project.scripts]
-ticktick-mcp = "main:main"
+ticktick-mcp = "ticktick_mcp.server:main"
 
 [project.urls]
-"Homepage" = "https://github.com/jen6/ticktick-mcp"
-
-[tool.uv.sources]
-ticktick-py = { git = "https://github.com/jen6/ticktick-py.git", rev = "main" }
+"Homepage" = "https://github.com/pdyxs/ticktick-mcp"
 
 [dependency-groups]
 dev = [

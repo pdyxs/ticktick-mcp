@@ -1,1 +1,28 @@
-# This file makes src/ticktick_mcp/tools a Python package 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from fastmcp import FastMCP
+
+
+def register_tools(mcp: FastMCP) -> None:
+    from ticktick_mcp.tools import (
+        calendar,
+        filters,
+        focus,
+        folders,
+        habits,
+        projects,
+        tags,
+        tasks,
+    )
+
+    tasks.register(mcp)
+    projects.register(mcp)
+    tags.register(mcp)
+    folders.register(mcp)
+    habits.register(mcp)
+    filters.register(mcp)
+    focus.register(mcp)
+    calendar.register(mcp)
