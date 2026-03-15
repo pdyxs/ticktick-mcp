@@ -211,23 +211,14 @@ def register(mcp: FastMCP) -> None:
             elif cname == "taskType":
                 task_type_conditions = condition.get("or", [])
 
-        # Fetch tasks from relevant projects
-        all_tasks: list[dict[str, Any]] = []
+        # Get all tasks from batch_check (v2, includes assigneeId)
+        sync_bean = data.get("syncTaskBean") or {}
+        all_tasks: list[dict[str, Any]] = sync_bean.get("update") or []
+
+        # Filter to relevant projects if specified
         if project_ids:
-            for pid in project_ids:
-                try:
-                    pdata = await client.v1_get(f"/project/{pid}/data")
-                    all_tasks.extend(pdata.get("tasks") or [])
-                except Exception:
-                    continue
-        else:
-            projects = await client.v1_get("/project")
-            for p in projects:
-                try:
-                    pdata = await client.v1_get(f"/project/{p['id']}/data")
-                    all_tasks.extend(pdata.get("tasks") or [])
-                except Exception:
-                    continue
+            project_id_set = set(project_ids)
+            all_tasks = [t for t in all_tasks if t.get("projectId") in project_id_set]
 
         # Get current user ID for "me" assignee condition
         user_id: str | None = None
