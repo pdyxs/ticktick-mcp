@@ -221,10 +221,26 @@ def register(mcp: FastMCP) -> None:
             all_tasks = [t for t in all_tasks if t.get("projectId") in project_id_set]
 
         # Get current user ID for "me" assignee condition
-        user_id: str | None = None
+        user_id: int | None = None
         if "me" in assignee_conditions:
-            profile = data.get("profile") or {}
-            user_id = profile.get("userId") or profile.get("id")
+            # Try profile fields first
+            for key in ("profile", "userProfile", "user"):
+                p = data.get(key) or {}
+                raw = p.get("userId") or p.get("id")
+                if raw:
+                    try:
+                        user_id = int(raw)
+                    except (ValueError, TypeError):
+                        user_id = raw
+                    break
+            # Fallback: extract from inbox project ID (format "inbox{userId}")
+            if not user_id:
+                for pid in (project_ids or []) + [
+                    proj.get("id", "") for proj in (data.get("projectProfiles") or [])
+                ]:
+                    if isinstance(pid, str) and pid.startswith("inbox") and pid[5:].isdigit():
+                        user_id = int(pid[5:])
+                        break
 
         now = datetime.now(timezone.utc)
 
