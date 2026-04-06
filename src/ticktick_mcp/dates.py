@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from typing import Any
 from zoneinfo import ZoneInfo
 
 
@@ -217,3 +218,28 @@ def date_to_epoch_ms(input_str: str) -> int:
 
     dt = datetime(d.year, d.month, d.day, tzinfo=UTC)
     return int(dt.timestamp() * 1000)
+
+
+_DATE_FIELDS = ("dueDate", "startDate", "completedTime", "createdTime", "modifiedTime")
+
+
+def convert_task_dates(task: dict[str, Any], tz_name: str) -> dict[str, Any]:
+    """Return a copy of a task dict with date fields converted to the given timezone.
+
+    TickTick returns dates as UTC strings (e.g. "2026-02-16T14:30:00.000+0000").
+    This converts them to local time so the AI sees correct times.
+    """
+    tz = ZoneInfo(tz_name)
+    task = dict(task)
+    for field in _DATE_FIELDS:
+        val = task.get(field)
+        if not val or not isinstance(val, str):
+            continue
+        try:
+            dt = datetime.fromisoformat(val)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=UTC)
+            task[field] = dt.astimezone(tz).isoformat(timespec="milliseconds")
+        except (ValueError, AttributeError):
+            pass
+    return task

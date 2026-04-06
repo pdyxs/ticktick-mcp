@@ -1,17 +1,27 @@
 from __future__ import annotations
 
 import contextlib
+import datetime
+import os
 from typing import Any
 
 from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
 
 from ticktick_mcp.client import TickTickClient
-from ticktick_mcp.dates import ParsedDateTime, parse_datetime, parse_duration
+from ticktick_mcp.dates import ParsedDateTime, convert_task_dates, parse_datetime, parse_duration
 from ticktick_mcp.models import Project
 from ticktick_mcp.resolve import resolve_name
 
 PRIORITY_MAP = {"none": 0, "low": 1, "medium": 3, "high": 5}
+
+
+def _tz_name() -> str:
+    return os.environ.get("TICKTICK_TIMEZONE") or datetime.datetime.now().astimezone().tzname() or "UTC"
+
+
+def _convert(task: dict[str, Any]) -> dict[str, Any]:
+    return convert_task_dates(task, _tz_name())
 
 
 def _get_client(ctx: Context) -> TickTickClient:
@@ -80,13 +90,15 @@ def register(mcp: FastMCP) -> None:
         if status == "completed":
             if project:
                 pid = await _resolve_project_id(client, project)
-                return await client.v2_get(f"/project/{pid}/completed")
-            return await client.v2_get(f"/project/all/completedInAll/?limit={limit}")
+                tasks = await client.v2_get(f"/project/{pid}/completed")
+            else:
+                tasks = await client.v2_get(f"/project/all/completedInAll/?limit={limit}")
+            return [_convert(t) for t in tasks]
 
         if project:
             pid = await _resolve_project_id(client, project)
             data = await client.v1_get(f"/project/{pid}/data")
-            return data.get("tasks") or []
+            return [_convert(t) for t in (data.get("tasks") or [])]
 
         # All projects
         projects = await client.v1_get("/project")
@@ -106,7 +118,7 @@ def register(mcp: FastMCP) -> None:
         except Exception:
             pass
 
-        return all_tasks
+        return [_convert(t) for t in all_tasks]
 
     @mcp.tool(
         annotations={
@@ -129,7 +141,7 @@ def register(mcp: FastMCP) -> None:
         """
         client = _get_client(ctx)
         pid = await _resolve_project_id(client, project)
-        return await client.v1_get(f"/project/{pid}/task/{task_id}")
+        return _convert(await client.v1_get(f"/project/{pid}/task/{task_id}"))
 
     @mcp.tool(
         annotations={
@@ -461,4 +473,4 @@ def register(mcp: FastMCP) -> None:
         """
         client = _get_client(ctx)
         data = await client.v2_get("/project/all/trash/page")
-        return data.get("tasks") or []
+        return [_convert(t) for t in (data.get("tasks") or [])]
