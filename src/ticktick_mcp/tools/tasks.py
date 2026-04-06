@@ -16,8 +16,16 @@ from ticktick_mcp.resolve import resolve_name
 PRIORITY_MAP = {"none": 0, "low": 1, "medium": 3, "high": 5}
 
 
+def _system_tz() -> str:
+    try:
+        link = os.readlink("/etc/localtime")
+        return link.split("/zoneinfo/")[-1]
+    except OSError:
+        return "UTC"
+
+
 def _tz_name() -> str:
-    return os.environ.get("TICKTICK_TIMEZONE") or "UTC"
+    return os.environ.get("TICKTICK_TIMEZONE") or _system_tz()
 
 
 def _convert(task: dict[str, Any]) -> dict[str, Any]:
