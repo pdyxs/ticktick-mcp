@@ -10,6 +10,7 @@ from fastmcp.exceptions import ToolError
 from ticktick_mcp.client import TickTickClient
 from ticktick_mcp.models import Filter
 from ticktick_mcp.resolve import resolve_name_with_etag
+from ticktick_mcp.tools.tasks import _convert
 
 
 def _get_client(ctx: Context) -> TickTickClient:
@@ -291,7 +292,7 @@ def register(mcp: FastMCP) -> None:
             return False
 
         return [
-            t for t in all_tasks
+            _convert(t) for t in all_tasks
             if t.get("status") == 0
             and check_date(t)
             and check_assignee(t)
