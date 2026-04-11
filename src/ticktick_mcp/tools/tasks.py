@@ -188,9 +188,11 @@ def register(mcp: FastMCP) -> None:
             desc: Plain text description.
             items: List of checklist item titles.
             all_day: Whether this is an all-day task. Auto-detected from date format.
-            timezone: IANA timezone name (e.g. "America/Chicago"). Defaults to system timezone.
+            timezone: IANA timezone name (e.g. "America/Chicago"). Defaults to TICKTICK_TIMEZONE env var, then the system timezone.
         """
         client = _get_client(ctx)
+        if timezone is None:
+            timezone = _tz_name()
         body: dict[str, Any] = {"title": title}
 
         if project:
@@ -289,9 +291,11 @@ def register(mcp: FastMCP) -> None:
             desc: New plain text description.
             clear_due: Set to true to remove the due date.
             clear_start: Set to true to remove the start date.
-            timezone: IANA timezone for date interpretation.
+            timezone: IANA timezone for date interpretation. Defaults to TICKTICK_TIMEZONE env var, then the system timezone.
         """
         client = _get_client(ctx)
+        if timezone is None:
+            timezone = _tz_name()
         pid = await _resolve_project_id(client, project)
         body: dict[str, Any] = {"taskId": task_id, "projectId": pid}
 
