@@ -59,20 +59,3 @@ def register(mcp: FastMCP) -> None:
         except Exception:
             return []
 
-    @mcp.tool(
-        annotations={
-            "readOnlyHint": True,
-            "destructiveHint": False,
-            "idempotentHint": True,
-            "openWorldHint": False,
-        }
-    )
-    async def sync_account(ctx: Context) -> dict[str, Any]:
-        """Perform a full account sync.
-
-        Fetches the complete account state including all projects, tasks, tags,
-        filters, folders, and settings. Useful for getting a comprehensive view
-        of the account or forcing a refresh. Requires v2 session token.
-        """
-        client = _get_client(ctx)
-        return await client.batch_check()

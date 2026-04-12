@@ -469,20 +469,3 @@ def register(mcp: FastMCP) -> None:
             f"/task/{task_id}", {"taskId": task_id, "projectId": pid, "parentId": ""}
         )
 
-    @mcp.tool(
-        annotations={
-            "readOnlyHint": True,
-            "destructiveHint": False,
-            "idempotentHint": True,
-            "openWorldHint": False,
-        }
-    )
-    async def list_trash(ctx: Context) -> list[dict[str, Any]]:
-        """List tasks in the trash.
-
-        Returns tasks that have been deleted but not yet permanently removed.
-        Requires v2 session token.
-        """
-        client = _get_client(ctx)
-        data = await client.v2_get("/project/all/trash/page")
-        return [_convert(t) for t in (data.get("tasks") or [])]
